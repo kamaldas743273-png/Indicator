@@ -1,0 +1,275 @@
+//@version=5
+indicator("Trade Execution Logic with SL/TP Levels", shorttitle="TEL-SL/TP", overlay=true, precision=4)
+
+// ============================================================================
+// TRADE EXECUTION LOGIC - Buy/Sell Signals with Stop Loss & Take Profit
+// Implements the corrected algorithmic trigger equations
+// ============================================================================
+
+// ============================================================================
+// INPUT PARAMETERS
+// ============================================================================
+
+// FRVP (Value Area) Parameters
+lookback_va = input.int(50, title="Value Area Lookback", minval=10)
+val_multiplier = input.float(0.5, title="VAL Multiplier", minval=0.1, maxval=2.0)
+vah_multiplier = input.float(0.5, title="VAH Multiplier", minval=0.1, maxval=2.0)
+epsilon_price = input.float(0.02, title="Epsilon (Price Tolerance %)", minval=0.01, maxval=0.5)
+
+// VWAP Trend Parameters
+vwap_slope_lookback = input.int(5, title="VWAP Slope Lookback", minval=2)
+
+// Order Flow Parameters
+min_volume_threshold = input.float(1.5, title="Minimum Volume Threshold (θ)", minval=0.5)
+theta_volume = input.float(2.0, title="Theta Volume (ΔV threshold)", minval=0.5)
+
+// Risk Management
+atr_length = input.int(14, title="ATR Length")
+sl_atr_multiple = input.float(1.5, title="SL: ATR Multiplier", minval=0.5)
+tp_atr_multiple = input.float(3.0, title="TP: ATR Multiplier", minval=1.0)
+risk_reward_ratio = input.float(2.0, title="Risk:Reward Ratio", minval=1.0)
+
+// Display Options
+show_buy_signals = input.bool(true, title="Show Buy Signals")
+show_sell_signals = input.bool(true, title="Show Sell Signals")
+show_levels = input.bool(true, title="Show VAL/VAH Levels")
+show_sl_tp = input.bool(true, title="Show SL/TP Levels")
+
+// ============================================================================
+// 1. CALCULATE VALUE AREA LOW (VAL) & HIGH (VAH) - FRVP
+// ============================================================================
+
+// POC: Price with highest volume (simplified)
+highest_vol = ta.highest(volume, lookback_va)
+poc = ta.valuewhen(volume == highest_vol, close, 0)
+
+// Value Area: ±20% range around POC
+val_range = poc * val_multiplier
+vah = poc + val_range
+val = poc - val_range
+
+// ============================================================================
+// 2. CALCULATE VWAP & TREND SLOPE
+// ============================================================================
+
+vwap_val = ta.vwap(close)
+
+// VWAP Slope (derivative approximation: dVWAP/dt)
+vwap_prev = vwap_val[vwap_slope_lookback]
+vwap_slope = (vwap_val - vwap_prev) / vwap_slope_lookback
+
+// ============================================================================
+// 3. CALCULATE ORDER FLOW (Delta Volume)
+// ============================================================================
+
+// Approximate Buy/Sell Volume from Price Action
+range_body = high - low
+if range_body == 0
+    range_body := 0.0001
+
+close_location = (close - low) / range_body
+buy_volume = volume * close_location
+sell_volume = volume * (1 - close_location)
+
+// Delta Volume (Change in CVD)
+delta_volume = buy_volume - sell_volume
+cumulative_delta = ta.cum(delta_volume)
+
+// Current Delta vs Threshold
+delta_meets_threshold = math.abs(delta_volume) > (theta_volume * ta.sma(volume, 20) / 100)
+
+// ============================================================================
+// 4. CALCULATE ATR FOR STOP LOSS & TAKE PROFIT
+// ============================================================================
+
+atr_val = ta.atr(atr_length)
+sl_distance = atr_val * sl_atr_multiple
+tp_distance = atr_val * tp_atr_multiple
+
+// ============================================================================
+// 5. BUY SIGNAL LOGIC
+// Gate 1: Macro (Location & Trend)
+// - Price at VAL (with epsilon tolerance)
+// - VWAP slope positive (uptrend)
+// ============================================================================
+
+price_at_val = close <= val + (val * epsilon_price / 100)
+vwap_uptrend = vwap_slope > 0
+
+macro_gate_buy = price_at_val and vwap_uptrend
+
+// Gate 2: Micro-Structure (Iceberg & Ghost Filter)
+// - Executed volume at bid > displayed volume
+// - Cancel-to-Trade ratio low (not spoofing)
+// ============================================================================
+
+cancel_volume = volume * 0.15  // Approx 15% cancellations
+traded_volume = volume * 0.85
+ctr_ratio = cancel_volume / (traded_volume + 1e-6)
+max_ctr_threshold = input.float(0.20, title="Max CTR Threshold", minval=0.05, maxval=0.5)
+
+iceberg_present = volume > ta.sma(volume, 20) * 1.5  // Volume spike
+not_spoofing = ctr_ratio <= max_ctr_threshold
+
+micro_gate_buy = iceberg_present and not_spoofing
+
+// Gate 3: Order Flow (Delta Absorption)
+// - Heavy selling (negative delta) but price holds/rises
+// - Delta exceeds threshold
+// ============================================================================
+
+heavy_selling = delta_volume < -(theta_volume * ta.sma(volume, 20) / 100)
+price_absorbing = close >= open or close == high
+
+orderflow_gate_buy = heavy_selling and price_absorbing and delta_meets_threshold
+
+// FINAL BUY SIGNAL
+buy_signal = macro_gate_buy and micro_gate_buy and orderflow_gate_buy
+
+// ============================================================================
+// 6. SELL SIGNAL LOGIC (Mirror of Buy)
+// Gate 1: Macro (Location & Trend)
+// - Price at VAH (with epsilon tolerance)
+// - VWAP slope negative (downtrend)
+// ============================================================================
+
+price_at_vah = close >= vah - (vah * epsilon_price / 100)
+vwap_downtrend = vwap_slope < 0
+
+macro_gate_sell = price_at_vah and vwap_downtrend
+
+// Gate 2: Micro-Structure
+micro_gate_sell = iceberg_present and not_spoofing
+
+// Gate 3: Order Flow
+// - Heavy buying (positive delta) but price falls
+// ============================================================================
+
+heavy_buying = delta_volume > (theta_volume * ta.sma(volume, 20) / 100)
+price_declining = close <= open or close == low
+
+orderflow_gate_sell = heavy_buying and price_declining and delta_meets_threshold
+
+// FINAL SELL SIGNAL
+sell_signal = macro_gate_sell and micro_gate_sell and orderflow_gate_sell
+
+// ============================================================================
+// 7. CALCULATE STOP LOSS & TAKE PROFIT
+// ============================================================================
+
+// FOR BUY ENTRY
+buy_entry = ta.valuewhen(buy_signal, close, 0)
+buy_sl = buy_entry - sl_distance          // Stop Loss below entry
+buy_tp = buy_entry + tp_distance          // Take Profit above entry (using ATR multiple)
+
+// Alternative TP calculation based on Risk:Reward
+buy_tp_rr = buy_entry + (sl_distance * risk_reward_ratio)
+buy_tp_final = math.max(buy_tp, buy_tp_rr)
+
+// FOR SELL ENTRY
+sell_entry = ta.valuewhen(sell_signal, close, 0)
+sell_sl = sell_entry + sl_distance        // Stop Loss above entry
+sell_tp = sell_entry - tp_distance        // Take Profit below entry
+sell_tp_rr = sell_entry - (sl_distance * risk_reward_ratio)
+sell_tp_final = math.min(sell_tp, sell_tp_rr)
+
+// ============================================================================
+// 8. PLOTTING - BUY/SELL SIGNALS
+// ============================================================================
+
+plotshape(show_buy_signals and buy_signal, title="BUY Signal", style=shape.labelup, location=location.belowbar, 
+          color=color.new(color.green, 0), textcolor=color.white, text="BUY", size=size.small)
+
+plotshape(show_sell_signals and sell_signal, title="SELL Signal", style=shape.labeldown, location=location.abovebar, 
+          color=color.new(color.red, 0), textcolor=color.white, text="SELL", size=size.small)
+
+// ============================================================================
+// 9. PLOTTING - VALUE AREA LEVELS
+// ============================================================================
+
+plot(show_levels ? val : na, title="Value Area Low (VAL)", color=color.new(color.blue, 60), linewidth=2, linestyle=line.style_dashed)
+plot(show_levels ? vah : na, title="Value Area High (VAH)", color=color.new(color.orange, 60), linewidth=2, linestyle=line.style_dashed)
+plot(show_levels ? poc : na, title="Point of Control (POC)", color=color.new(color.purple, 60), linewidth=2, linestyle=line.style_dotted)
+
+// ============================================================================
+// 10. PLOTTING - STOP LOSS & TAKE PROFIT
+// ============================================================================
+
+var line buy_sl_line = na
+var line buy_tp_line = na
+var line sell_sl_line = na
+var line sell_tp_line = na
+
+if buy_signal
+    line.delete(buy_sl_line)
+    line.delete(buy_tp_line)
+    buy_sl_line := line.new(bar_index, buy_sl, bar_index + 50, buy_sl, extend=extend.right, 
+                            color=color.new(color.red, 60), width=2, style=line.style_dotted)
+    buy_tp_line := line.new(bar_index, buy_tp_final, bar_index + 50, buy_tp_final, extend=extend.right, 
+                            color=color.new(color.green, 60), width=2, style=line.style_dotted)
+
+if sell_signal
+    line.delete(sell_sl_line)
+    line.delete(sell_tp_line)
+    sell_sl_line := line.new(bar_index, sell_sl, bar_index + 50, sell_sl, extend=extend.right, 
+                             color=color.new(color.red, 60), width=2, style=line.style_dotted)
+    sell_tp_line := line.new(bar_index, sell_tp_final, bar_index + 50, sell_tp_final, extend=extend.right, 
+                             color=color.new(color.green, 60), width=2, style=line.style_dotted)
+
+// ============================================================================
+// 11. ALERTS
+// ============================================================================
+
+alertcondition(buy_signal, title="BUY Entry Signal", message="BUY at {{close}} | SL: {{plot('BuySL')}} | TP: {{plot('BuyTP')}}")
+alertcondition(sell_signal, title="SELL Entry Signal", message="SELL at {{close}} | SL: {{plot('SellSL')}} | TP: {{plot('SellTP')}}")
+
+// ============================================================================
+// 12. TABLE: REAL-TIME LEVELS & ENTRY INFO
+// ============================================================================
+
+var table info_table = table.new(position.top_right, 2, 10, border_color=color.gray, border_width=1)
+
+if barstate.islast
+    table.cell(info_table, 0, 0, "Trade Info", text_color=color.white, bgcolor=color.navy)
+    table.cell(info_table, 1, 0, "", text_color=color.white, bgcolor=color.navy)
+    
+    table.cell(info_table, 0, 1, "VAL:", text_color=color.white, bgcolor=color.new(color.black, 50))
+    table.cell(info_table, 1, 1, str.tostring(val, format.price), text_color=color.blue)
+    
+    table.cell(info_table, 0, 2, "VAH:", text_color=color.white, bgcolor=color.new(color.black, 50))
+    table.cell(info_table, 1, 2, str.tostring(vah, format.price), text_color=color.orange)
+    
+    table.cell(info_table, 0, 3, "POC:", text_color=color.white, bgcolor=color.new(color.black, 50))
+    table.cell(info_table, 1, 3, str.tostring(poc, format.price), text_color=color.purple)
+    
+    table.cell(info_table, 0, 4, "VWAP Slope:", text_color=color.white, bgcolor=color.new(color.black, 50))
+    table.cell(info_table, 1, 4, str.tostring(vwap_slope, format.price), text_color=color.gray)
+    
+    table.cell(info_table, 0, 5, "Delta Volume:", text_color=color.white, bgcolor=color.new(color.black, 50))
+    table.cell(info_table, 1, 5, str.tostring(delta_volume, format.volume), text_color=color.gray)
+    
+    if buy_signal
+        table.cell(info_table, 0, 6, "BUY Entry:", text_color=color.white, bgcolor=color.green)
+        table.cell(info_table, 1, 6, str.tostring(buy_entry, format.price), text_color=color.white, bgcolor=color.green)
+        
+        table.cell(info_table, 0, 7, "SL:", text_color=color.white, bgcolor=color.new(color.red, 50))
+        table.cell(info_table, 1, 7, str.tostring(buy_sl, format.price), text_color=color.red)
+        
+        table.cell(info_table, 0, 8, "TP:", text_color=color.white, bgcolor=color.new(color.green, 50))
+        table.cell(info_table, 1, 8, str.tostring(buy_tp_final, format.price), text_color=color.green)
+        
+        table.cell(info_table, 0, 9, "R:R Ratio:", text_color=color.white, bgcolor=color.new(color.blue, 50))
+        table.cell(info_table, 1, 9, str.tostring(risk_reward_ratio, format.price), text_color=color.yellow)
+    
+    if sell_signal
+        table.cell(info_table, 0, 6, "SELL Entry:", text_color=color.white, bgcolor=color.red)
+        table.cell(info_table, 1, 6, str.tostring(sell_entry, format.price), text_color=color.white, bgcolor=color.red)
+        
+        table.cell(info_table, 0, 7, "SL:", text_color=color.white, bgcolor=color.new(color.red, 50))
+        table.cell(info_table, 1, 7, str.tostring(sell_sl, format.price), text_color=color.red)
+        
+        table.cell(info_table, 0, 8, "TP:", text_color=color.white, bgcolor=color.new(color.green, 50))
+        table.cell(info_table, 1, 8, str.tostring(sell_tp_final, format.price), text_color=color.green)
+        
+        table.cell(info_table, 0, 9, "R:R Ratio:", text_color=color.white, bgcolor=color.new(color.blue, 50))
+        table.cell(info_table, 1, 9, str.tostring(risk_reward_ratio, format.price), text_color=color.yellow)
