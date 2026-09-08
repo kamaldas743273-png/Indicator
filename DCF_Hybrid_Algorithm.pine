@@ -182,8 +182,8 @@ barcolor(candle_color, title="Signal Candle Color")
 // PLOT DCF INTRINSIC VALUE LEVEL
 // ============================================================================
 
-plot(show_dcf_level ? ivps : na, title="IVPS (Intrinsic Value Per Share)", color=color.new(color.purple, 0), linewidth=2, style=plot.style_line)
-plot(show_dcf_level ? auth_threshold : na, title="Authorization Threshold (80% IVPS)", color=color.new(color.orange, 0), linewidth=2, style=plot.style_dashed)
+plot(show_dcf_level ? ivps : na, title="IVPS (Intrinsic Value Per Share)", color=color.new(color.purple, 0), linewidth=2)
+plot(show_dcf_level ? auth_threshold : na, title="Authorization Threshold (80% IVPS)", color=color.new(color.orange, 0), linewidth=2, linestyle=line.style_dashed)
 
 // ============================================================================
 // PLOT AUTHORIZATION GATE STATUS
@@ -210,14 +210,14 @@ plotshape(show_trade_signals and signal_sell, title="HYBRID SELL Signal",
 // ALERTS
 // ============================================================================
 
-alertcondition(signal_buy, title="Hybrid Buy Signal", 
-               message="🟢 HYBRID BUY: DCF Authorization + Stacked Clash at " + str.tostring(close, format.price))
+if signal_buy
+    alert("HYBRID BUY: DCF Authorization + Stacked Clash", alert.freq_once_per_bar)
 
-alertcondition(signal_sell, title="Hybrid Sell Signal", 
-               message="🔴 HYBRID SELL: DCF Authorization + Stacked Clash at " + str.tostring(close, format.price))
+if signal_sell
+    alert("HYBRID SELL: DCF Authorization + Stacked Clash", alert.freq_once_per_bar)
 
-alertcondition(auth_fund_value == 1, title="DCF Authorization Gate Opened", 
-               message="💙 DCF AUTH: Price below 80% IVPS - High frequency execution enabled")
+if auth_fund_value == 1
+    alert("DCF AUTH: Price below 80% IVPS - High frequency execution enabled", alert.freq_once_per_bar)
 
 // ============================================================================
 // INFO TABLE - REAL-TIME DCF & HYBRID STATUS
@@ -231,10 +231,10 @@ if barstate.islast
     table.cell(hybrid_table, 1, 0, "", text_color=color.white, bgcolor=color.navy)
     
     table.cell(hybrid_table, 0, 1, "Enterprise Value:", text_color=color.white, bgcolor=color.new(color.black, 50))
-    table.cell(hybrid_table, 1, 1, str.tostring(enterprise_value, format.currency), text_color=color.yellow)
+    table.cell(hybrid_table, 1, 1, str.tostring(enterprise_value, format.price), text_color=color.yellow)
     
     table.cell(hybrid_table, 0, 2, "Terminal Value:", text_color=color.white, bgcolor=color.new(color.black, 50))
-    table.cell(hybrid_table, 1, 2, str.tostring(terminal_value, format.currency), text_color=color.yellow)
+    table.cell(hybrid_table, 1, 2, str.tostring(terminal_value, format.price), text_color=color.yellow)
     
     table.cell(hybrid_table, 0, 3, "IVPS:", text_color=color.white, bgcolor=color.new(color.black, 50))
     table.cell(hybrid_table, 1, 3, str.tostring(ivps, format.price), text_color=color.purple, text_size=size.large)
