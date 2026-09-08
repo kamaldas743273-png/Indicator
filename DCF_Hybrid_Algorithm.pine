@@ -1,46 +1,70 @@
 //@version=6
-indicator("DCF Fundamentals + Hybrid Execution Algorithm", shorttitle="DCF-Hybrid", overlay=true, precision=2)
+indicator("DCF Hybrid Scalping - Multi-Timeframe with TP/SL", shorttitle="DCF-Scalp-MTF-TP", overlay=true, precision=2)
 
 // ============================================================================
-// DCF FUNDAMENTALS + HYBRID EXECUTION ALGORITHM
-// Slow Loop: Quarterly DCF Authorization (Fundamental Gate)
-// Fast Loop: Millisecond Clash Flow Execution (Order Flow Gate)
+// DCF FUNDAMENTALS + HYBRID SCALPING - MULTI-TIMEFRAME VERSION
+// Optimized for scalping with Entry, TP, and SL markers
 // ============================================================================
 
 // ============================================================================
-// INPUT PARAMETERS - DCF VALUATION (SLOW LOOP - QUARTERLY)
+// INPUT PARAMETERS - TIMEFRAME SELECTION
 // ============================================================================
 
-// Cash Flow Projections (User inputs for quarterly earnings)
-cf_year1 = input.float(1000000, title="Year 1 Cash Flow", step=10000)
-cf_year2 = input.float(1200000, title="Year 2 Cash Flow", step=10000)
-cf_year3 = input.float(1400000, title="Year 3 Cash Flow", step=10000)
-cf_year4 = input.float(1600000, title="Year 4 Cash Flow", step=10000)
-cf_year5 = input.float(1800000, title="Year 5 Cash Flow", step=10000)
+tf1 = input.timeframe("1", title="Timeframe 1", group="Timeframes")
+tf2 = input.timeframe("5", title="Timeframe 2", group="Timeframes")
+tf3 = input.timeframe("15", title="Timeframe 3", group="Timeframes")
+tf4 = input.timeframe("60", title="Timeframe 4 (1H)", group="Timeframes")
 
-// DCF Parameters
-discount_rate_r = input.float(0.10, title="Discount Rate (r)", minval=0.01, maxval=0.5, step=0.01)
-perpetual_growth_g = input.float(0.03, title="Perpetual Growth Rate (g)", minval=0.01, maxval=0.10, step=0.01)
-
-// Company Financials
-total_debt = input.float(5000000, title="Total Debt", step=10000)
-total_cash = input.float(2000000, title="Total Cash", step=10000)
-shares_outstanding = input.float(100000, title="Shares Outstanding", step=1000)
-
-// Valuation Discount for Entry
-entry_discount = input.float(0.20, title="Entry Discount % (Buy if P < IVPS * (1 - discount))", minval=0.05, maxval=0.50, step=0.05)
+show_tf1 = input.bool(true, title="Show TF1 Signals", group="Timeframes")
+show_tf2 = input.bool(true, title="Show TF2 Signals", group="Timeframes")
+show_tf3 = input.bool(true, title="Show TF3 Signals", group="Timeframes")
+show_tf4 = input.bool(false, title="Show TF4 Signals", group="Timeframes")
 
 // ============================================================================
-// INPUT PARAMETERS - ORDER FLOW EXECUTION (FAST LOOP - MILLISECONDS)
+// DCF VALUATION PARAMETERS (SCALPING OPTIMIZED)
 // ============================================================================
 
-// Clash Detection Threshold
-clash_threshold = input.float(3.0, title="Clash Imbalance Threshold", minval=1.5, maxval=5.0)
-stacked_count = input.int(3, title="Stacked Clash Count (k)", minval=2, maxval=5)
-min_vol_threshold = input.float(100.0, title="Min Volume (Anti-Dust)", minval=10.0)
+cf_year1 = input.float(1000000, title="Year 1 Cash Flow", step=10000, group="DCF Settings")
+cf_year2 = input.float(1200000, title="Year 2 Cash Flow", step=10000, group="DCF Settings")
+cf_year3 = input.float(1400000, title="Year 3 Cash Flow", step=10000, group="DCF Settings")
+cf_year4 = input.float(1600000, title="Year 4 Cash Flow", step=10000, group="DCF Settings")
+cf_year5 = input.float(1800000, title="Year 5 Cash Flow", step=10000, group="DCF Settings")
 
-// Order Flow Strength
-min_delta_strength = input.float(2.0, title="Min Delta Strength Multiplier", minval=1.0, maxval=5.0)
+discount_rate_r = input.float(0.10, title="Discount Rate (r)", minval=0.01, maxval=0.5, step=0.01, group="DCF Settings")
+perpetual_growth_g = input.float(0.03, title="Perpetual Growth Rate (g)", minval=0.01, maxval=0.10, step=0.01, group="DCF Settings")
+
+total_debt = input.float(5000000, title="Total Debt", step=10000, group="DCF Settings")
+total_cash = input.float(2000000, title="Total Cash", step=10000, group="DCF Settings")
+shares_outstanding = input.float(100000, title="Shares Outstanding", step=1000, group="DCF Settings")
+
+entry_discount = input.float(0.20, title="Entry Discount % (Buy if P < IVPS * (1 - discount))", minval=0.05, maxval=0.50, step=0.05, group="DCF Settings")
+
+// ============================================================================
+// SCALPING PARAMETERS (FAST EXECUTION)
+// ============================================================================
+
+clash_threshold = input.float(2.5, title="Clash Imbalance Threshold", minval=1.0, maxval=5.0, group="Scalping Settings")
+stacked_count = input.int(2, title="Stacked Clash Count (k)", minval=1, maxval=3, group="Scalping Settings")
+min_vol_threshold = input.float(50.0, title="Min Volume (Anti-Dust)", minval=10.0, group="Scalping Settings")
+min_delta_strength = input.float(1.5, title="Min Delta Strength Multiplier", minval=0.5, maxval=3.0, group="Scalping Settings")
+
+// RSI Confirmation for scalping
+use_rsi = input.bool(true, title="Use RSI Confirmation", group="Scalping Settings")
+rsi_length = input.int(14, title="RSI Length", minval=5, maxval=50, group="Scalping Settings")
+rsi_oversold = input.float(30, title="RSI Oversold Level (Buy)", minval=10, maxval=50, group="Scalping Settings")
+rsi_overbought = input.float(70, title="RSI Overbought Level (Sell)", minval=50, maxval=90, group="Scalping Settings")
+
+// ============================================================================
+// TAKE PROFIT & STOP LOSS SETTINGS
+// ============================================================================
+
+// Buy TP/SL
+buy_tp_pct = input.float(1.5, title="Buy Take Profit %", minval=0.1, maxval=10.0, step=0.1, group="Risk Management")
+buy_sl_pct = input.float(0.8, title="Buy Stop Loss %", minval=0.1, maxval=5.0, step=0.1, group="Risk Management")
+
+// Sell TP/SL
+sell_tp_pct = input.float(1.5, title="Sell Take Profit %", minval=0.1, maxval=10.0, step=0.1, group="Risk Management")
+sell_sl_pct = input.float(0.8, title="Sell Stop Loss %", minval=0.1, maxval=5.0, step=0.1, group="Risk Management")
 
 // ============================================================================
 // DISPLAY OPTIONS
@@ -50,6 +74,9 @@ show_dcf_level = input.bool(true, title="Show DCF IVPS Level")
 show_auth_gate = input.bool(true, title="Show Authorization Status")
 show_trade_signals = input.bool(true, title="Show Trade Signals")
 show_candle_color = input.bool(true, title="Highlight Candles on Signal")
+show_info_table = input.bool(true, title="Show Info Table")
+show_tp_sl = input.bool(true, title="Show TP/SL Levels", group="TP/SL Display")
+show_entry_line = input.bool(true, title="Show Entry Line", group="TP/SL Display")
 
 // ============================================================================
 // CONSTANTS
@@ -58,224 +85,292 @@ show_candle_color = input.bool(true, title="Highlight Candles on Signal")
 epsilon = 1e-6
 
 // ============================================================================
-// PART 1: SLOW LOOP (QUARTERLY) - DCF VALUATION
-// Recalculates only when new earnings data is available
+// DCF VALUATION CALCULATION
 // ============================================================================
 
-// Present Value of Year 1-5 Cash Flows
 pv_cf1 = cf_year1 / math.pow(1 + discount_rate_r, 1)
 pv_cf2 = cf_year2 / math.pow(1 + discount_rate_r, 2)
 pv_cf3 = cf_year3 / math.pow(1 + discount_rate_r, 3)
 pv_cf4 = cf_year4 / math.pow(1 + discount_rate_r, 4)
 pv_cf5 = cf_year5 / math.pow(1 + discount_rate_r, 5)
 
-// Sum of PV for first 5 years
 pv_explicit = pv_cf1 + pv_cf2 + pv_cf3 + pv_cf4 + pv_cf5
 
-// Terminal Value using Perpetuity Growth Model
-// TV = (CF_n * (1 + g)) / (r - g)
 tv_numerator = cf_year5 * (1 + perpetual_growth_g)
 tv_denominator = discount_rate_r - perpetual_growth_g
 terminal_value = tv_numerator / (tv_denominator + epsilon)
 
-// Present Value of Terminal Value
 pv_terminal = terminal_value / math.pow(1 + discount_rate_r, 5)
 
-// Total Enterprise Value (DCF)
 enterprise_value = pv_explicit + pv_terminal
 
-// Intrinsic Value Per Share (IVPS)
-// IVPS = (DCF - Total Debt + Total Cash) / Shares Outstanding
 net_debt = total_debt - total_cash
 ivps = (enterprise_value - net_debt) / (shares_outstanding + epsilon)
-
-// ============================================================================
-// AUTHORIZATION GATE (AuthFund)
-// Returns 1 if price is trading at or below 80% of IVPS
-// Acts as a static permissive filter for high-frequency trading
-// ============================================================================
 
 auth_threshold = ivps * (1 - entry_discount)
 auth_fund_value = close <= auth_threshold ? 1.0 : 0.0
 
 // ============================================================================
-// PART 2: FAST LOOP (MILLISECONDS) - ORDER FLOW EXECUTION
-// Runs every candle but only executes if AuthFund = 1
+// SCALPING SIGNAL FUNCTION
 // ============================================================================
 
-// ============================================================================
-// ORDER FLOW METRICS
-// ============================================================================
-
-// Bid/Ask Volume Distribution
-range_price = high - low
-range_price := range_price == 0 ? close * 0.0001 : range_price
-
-bid_ratio = (close - low) / range_price
-bid_vol = volume * bid_ratio
-ask_vol = volume * (1 - bid_ratio)
-
-// Diagonal Clash Imbalance (Bullish)
-ci_bullish = ask_vol / (bid_vol[1] + epsilon)
-
-// Anti-Dust Filter
-dust_filter = ask_vol >= min_vol_threshold
-ci_bullish_filtered = dust_filter ? ci_bullish : 0.0
-
-// Stacked Clash Detection (3 consecutive bars)
-clash_current = ci_bullish_filtered > clash_threshold ? 1.0 : 0.0
-clash_prev1 = ci_bullish_filtered[1] > clash_threshold ? 1.0 : 0.0
-clash_prev2 = ci_bullish_filtered[2] > clash_threshold ? 1.0 : 0.0
-
-stacked_clash_sum = clash_current + clash_prev1 + clash_prev2
-stacked_clash_buy = stacked_clash_sum == stacked_count ? 1.0 : 0.0
-
-// ============================================================================
-// DELTA VOLUME STRENGTH
-// ============================================================================
-
-delta_current = ask_vol - bid_vol
-avg_volume = ta.sma(volume, 20)
-delta_strength = math.abs(delta_current) / (avg_volume + epsilon)
-
-// ============================================================================
-// FINAL HYBRID SIGNAL
-// SignalBuy = (AuthFund = 1) AND (Stacked_ClashBuy = 1) AND (Delta_Strength > threshold)
-// ============================================================================
-
-signal_buy = (auth_fund_value == 1) and (stacked_clash_buy == 1.0) and (delta_strength > min_delta_strength)
+f_scalping_signal(src_close, src_high, src_low, src_volume) =>
+    range_price = src_high - src_low
+    range_price := range_price == 0 ? src_close * 0.0001 : range_price
+    
+    bid_ratio = (src_close - src_low) / range_price
+    bid_vol = src_volume * bid_ratio
+    ask_vol = src_volume * (1 - bid_ratio)
+    
+    ci_bullish = ask_vol / (nz(bid_vol[1]) + epsilon)
+    
+    dust_filter = ask_vol >= min_vol_threshold
+    ci_bullish_filtered = dust_filter ? ci_bullish : 0.0
+    
+    clash_current = ci_bullish_filtered > clash_threshold ? 1.0 : 0.0
+    clash_prev1 = nz(ci_bullish_filtered[1]) > clash_threshold ? 1.0 : 0.0
+    
+    stacked_clash_sum = clash_current + clash_prev1
+    stacked_clash_buy = stacked_clash_sum >= stacked_count ? 1.0 : 0.0
+    
+    delta_current = ask_vol - bid_vol
+    avg_volume = ta.sma(src_volume, 20)
+    delta_strength = math.abs(delta_current) / (avg_volume + epsilon)
+    
+    rsi_val = ta.rsi(src_close, rsi_length)
+    rsi_buy = rsi_val < rsi_oversold
+    rsi_sell = rsi_val > rsi_overbought
+    
+    buy_signal = (auth_fund_value == 1) and (stacked_clash_buy == 1.0) and (delta_strength > min_delta_strength)
+    buy_signal := use_rsi ? buy_signal and rsi_buy : buy_signal
+    
+    sell_signal = (auth_fund_value == 1) and ((nz(ci_bullish_filtered[1]) > clash_threshold ? 1.0 : 0.0) == 1.0) and (delta_strength > min_delta_strength)
+    sell_signal := use_rsi ? sell_signal and rsi_sell : sell_signal
+    
+    [buy_signal, sell_signal, rsi_val, ci_bullish_filtered]
 
 // ============================================================================
-// BEARISH MIRROR LOGIC
+// MULTI-TIMEFRAME ANALYSIS
 // ============================================================================
 
-ci_bearish = bid_vol / (ask_vol[1] + epsilon)
-ci_bearish_filtered = dust_filter ? ci_bearish : 0.0
-
-clash_sell_current = ci_bearish_filtered > clash_threshold ? 1.0 : 0.0
-clash_sell_prev1 = ci_bearish_filtered[1] > clash_threshold ? 1.0 : 0.0
-clash_sell_prev2 = ci_bearish_filtered[2] > clash_threshold ? 1.0 : 0.0
-
-stacked_clash_sell_sum = clash_sell_current + clash_sell_prev1 + clash_sell_prev2
-stacked_clash_sell = stacked_clash_sell_sum == stacked_count ? 1.0 : 0.0
-
-signal_sell = (auth_fund_value == 1) and (stacked_clash_sell == 1.0) and (delta_strength > min_delta_strength)
+[buy_tf1, sell_tf1, rsi_tf1, clash_tf1] = request.security(syminfo.tickerid, tf1, f_scalping_signal(close, high, low, volume))
+[buy_tf2, sell_tf2, rsi_tf2, clash_tf2] = request.security(syminfo.tickerid, tf2, f_scalping_signal(close, high, low, volume))
+[buy_tf3, sell_tf3, rsi_tf3, clash_tf3] = request.security(syminfo.tickerid, tf3, f_scalping_signal(close, high, low, volume))
+[buy_tf4, sell_tf4, rsi_tf4, clash_tf4] = request.security(syminfo.tickerid, tf4, f_scalping_signal(close, high, low, volume))
 
 // ============================================================================
-// CANDLE COLORING & VISUALIZATION
+// SIGNAL AGGREGATION (CONFLUENCE)
 // ============================================================================
 
-// Determine candle color based on signals
+total_buy_signals = (buy_tf1 ? 1 : 0) + (buy_tf2 ? 1 : 0) + (buy_tf3 ? 1 : 0) + (buy_tf4 ? 1 : 0)
+total_sell_signals = (sell_tf1 ? 1 : 0) + (sell_tf2 ? 1 : 0) + (sell_tf3 ? 1 : 0) + (sell_tf4 ? 1 : 0)
+
+strong_buy = total_buy_signals >= 2 and show_tf1
+strong_sell = total_sell_signals >= 2 and show_tf1
+
+// ============================================================================
+// CALCULATE TP/SL LEVELS
+// ============================================================================
+
+// Buy Entry & Levels
+buy_entry = close
+buy_tp = buy_entry * (1 + buy_tp_pct / 100)
+buy_sl = buy_entry * (1 - buy_sl_pct / 100)
+
+// Sell Entry & Levels
+sell_entry = close
+sell_tp = sell_entry * (1 - sell_tp_pct / 100)
+sell_sl = sell_entry * (1 + sell_sl_pct / 100)
+
+// ============================================================================
+// PLOT TP/SL LEVELS
+// ============================================================================
+
+// Buy TP/SL Levels
+buy_entry_plot = plot(show_tp_sl and strong_buy ? buy_entry : na, title="Buy Entry", color=color.new(color.lime, 0), linewidth=2, style=plot.linestyle_solid)
+buy_tp_plot = plot(show_tp_sl and strong_buy ? buy_tp : na, title="Buy TP", color=color.new(color.aqua, 0), linewidth=2, style=plot.linestyle_dashed)
+buy_sl_plot = plot(show_tp_sl and strong_buy ? buy_sl : na, title="Buy SL", color=color.new(color.orange, 0), linewidth=2, style=plot.linestyle_dotted)
+
+// Sell TP/SL Levels
+sell_entry_plot = plot(show_tp_sl and strong_sell ? sell_entry : na, title="Sell Entry", color=color.new(color.red, 0), linewidth=2, style=plot.linestyle_solid)
+sell_tp_plot = plot(show_tp_sl and strong_sell ? sell_tp : na, title="Sell TP", color=color.new(color.maroon, 0), linewidth=2, style=plot.linestyle_dashed)
+sell_sl_plot = plot(show_tp_sl and strong_sell ? sell_sl : na, title="Sell SL", color=color.new(color.orange, 0), linewidth=2, style=plot.linestyle_dotted)
+
+// Fill between Entry and TP/SL
+fill(buy_entry_plot, buy_tp_plot, color=color.new(color.lime, 90), title="Buy Profit Zone")
+fill(buy_entry_plot, buy_sl_plot, color=color.new(color.red, 90), title="Buy Loss Zone")
+
+fill(sell_entry_plot, sell_tp_plot, color=color.new(color.red, 90), title="Sell Profit Zone")
+fill(sell_entry_plot, sell_sl_plot, color=color.new(color.lime, 90), title="Sell Loss Zone")
+
+// ============================================================================
+// CANDLE COLORING
+// ============================================================================
+
 candle_color = color.new(color.gray, 100)
 if show_candle_color
-    if signal_buy
-        candle_color := color.new(color.lime, 40)
-    else if signal_sell
-        candle_color := color.new(color.red, 40)
+    if strong_buy
+        candle_color := color.new(color.lime, 30)
+    else if strong_sell
+        candle_color := color.new(color.red, 30)
+    else if buy_tf1
+        candle_color := color.new(color.lime, 60)
+    else if sell_tf1
+        candle_color := color.new(color.red, 60)
     else if auth_fund_value == 1
-        candle_color := color.new(color.blue, 70)
+        candle_color := color.new(color.blue, 80)
 
-// Apply candle coloring
 barcolor(candle_color, title="Signal Candle Color")
 
 // ============================================================================
-// PLOT DCF INTRINSIC VALUE LEVEL
+// PLOT DCF LEVELS
 // ============================================================================
 
 plot(show_dcf_level ? ivps : na, title="IVPS (Intrinsic Value Per Share)", color=color.new(color.purple, 0), linewidth=2)
 plot(show_dcf_level ? auth_threshold : na, title="Authorization Threshold (80% IVPS)", color=color.new(color.orange, 0), linewidth=2, linestyle=plot.linestyle_dashed)
 
 // ============================================================================
-// PLOT AUTHORIZATION GATE STATUS
+// PLOT AUTHORIZATION STATUS
 // ============================================================================
 
-// Background highlight when AuthFund is active
-bgcolor(show_auth_gate and auth_fund_value == 1 ? color.new(color.blue, 85) : na, title="Authorization Active (AuthFund=1)")
+bgcolor(show_auth_gate and auth_fund_value == 1 ? color.new(color.blue, 85) : na, title="Authorization Active")
 
 // ============================================================================
-// PLOT TRADE SIGNALS ON CHART
+// PLOT TRADE SIGNALS WITH LABELS
 // ============================================================================
 
-plotshape(show_trade_signals and signal_buy, title="HYBRID BUY Signal", 
-          style=shape.labelup, location=location.belowbar, 
-          color=color.new(color.lime, 0), textcolor=color.black, 
-          text="BUY\nHybrid", size=size.small)
+// Strong Buy Signal
+if show_trade_signals and strong_buy
+    label.new(bar_index, low * 0.998, "🟢 BUY++\nENTRY: " + str.tostring(buy_entry, format.price) + "\nTP: " + str.tostring(buy_tp, format.price) + "\nSL: " + str.tostring(buy_sl, format.price), 
+              style=label.style_label_up, color=color.new(color.lime, 0), textcolor=color.black, size=size.small)
 
-plotshape(show_trade_signals and signal_sell, title="HYBRID SELL Signal", 
-          style=shape.labeldown, location=location.abovebar, 
-          color=color.new(color.red, 0), textcolor=color.white, 
-          text="SELL\nHybrid", size=size.small)
+// TF1 Buy Signal
+if show_trade_signals and show_tf1 and buy_tf1 and not strong_buy
+    label.new(bar_index, low * 0.998, "🟢 BUY (TF1)", style=label.style_label_up, color=color.new(color.lime, 50), textcolor=color.black, size=size.tiny)
+
+// TF2 Buy Signal
+if show_trade_signals and show_tf2 and buy_tf2 and not buy_tf1
+    label.new(bar_index, low * 0.999, "▲ BUY (TF2)", style=label.style_label_up, color=color.new(color.aqua, 0), textcolor=color.black, size=size.tiny)
+
+// TF3 Buy Signal
+if show_trade_signals and show_tf3 and buy_tf3 and not (buy_tf1 or buy_tf2)
+    label.new(bar_index, low * 0.9995, "◆ BUY (TF3)", style=label.style_label_up, color=color.new(color.teal, 0), textcolor=color.black, size=size.tiny)
+
+// Strong Sell Signal
+if show_trade_signals and strong_sell
+    label.new(bar_index, high * 1.002, "🔴 SELL++\nENTRY: " + str.tostring(sell_entry, format.price) + "\nTP: " + str.tostring(sell_tp, format.price) + "\nSL: " + str.tostring(sell_sl, format.price), 
+              style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.small)
+
+// TF1 Sell Signal
+if show_trade_signals and show_tf1 and sell_tf1 and not strong_sell
+    label.new(bar_index, high * 1.002, "🔴 SELL (TF1)", style=label.style_label_down, color=color.new(color.red, 50), textcolor=color.white, size=size.tiny)
+
+// TF2 Sell Signal
+if show_trade_signals and show_tf2 and sell_tf2 and not sell_tf1
+    label.new(bar_index, high * 1.001, "▼ SELL (TF2)", style=label.style_label_down, color=color.new(color.orange, 0), textcolor=color.white, size=size.tiny)
+
+// TF3 Sell Signal
+if show_trade_signals and show_tf3 and sell_tf3 and not (sell_tf1 or sell_tf2)
+    label.new(bar_index, high * 1.0005, "◆ SELL (TF3)", style=label.style_label_down, color=color.new(color.maroon, 0), textcolor=color.white, size=size.tiny)
 
 // ============================================================================
 // ALERTS
 // ============================================================================
 
-if signal_buy
-    alert("HYBRID BUY: DCF Authorization + Stacked Clash", alert.freq_once_per_bar)
+if strong_buy
+    alert("🟢 STRONG BUY CONFLUENCE: " + str.tostring(total_buy_signals) + " timeframes! Entry: " + str.tostring(buy_entry, format.price) + " | TP: " + str.tostring(buy_tp, format.price) + " | SL: " + str.tostring(buy_sl, format.price), alert.freq_once_per_bar)
 
-if signal_sell
-    alert("HYBRID SELL: DCF Authorization + Stacked Clash", alert.freq_once_per_bar)
+if strong_sell
+    alert("🔴 STRONG SELL CONFLUENCE: " + str.tostring(total_sell_signals) + " timeframes! Entry: " + str.tostring(sell_entry, format.price) + " | TP: " + str.tostring(sell_tp, format.price) + " | SL: " + str.tostring(sell_sl, format.price), alert.freq_once_per_bar)
 
-if auth_fund_value == 1
-    alert("DCF AUTH: Price below 80% IVPS - High frequency execution enabled", alert.freq_once_per_bar)
+if buy_tf1
+    alert("BUY Signal on TF1 (" + tf1 + ")", alert.freq_once_per_bar)
+
+if sell_tf1
+    alert("SELL Signal on TF1 (" + tf1 + ")", alert.freq_once_per_bar)
 
 // ============================================================================
-// INFO TABLE - REAL-TIME DCF & HYBRID STATUS
+// INFO TABLE - REAL-TIME MULTI-TIMEFRAME STATUS
 // ============================================================================
 
-var table hybrid_table = table.new(position.bottom_right, 2, 16, border_color=color.gray, border_width=2)
+var table info_table = table.new(position.top_right, 6, 11, border_color=color.gray, border_width=2)
 
-if barstate.islast
-    // DCF Section
-    table.cell(hybrid_table, 0, 0, "DCF VALUATION", text_color=color.white, bgcolor=color.navy, text_halign=text.align_center)
-    table.cell(hybrid_table, 1, 0, "", text_color=color.white, bgcolor=color.navy)
+if show_info_table and barstate.islast
+    // Header
+    table.cell(info_table, 0, 0, "TF", text_color=color.white, bgcolor=color.navy, text_halign=text.align_center)
+    table.cell(info_table, 1, 0, "Price", text_color=color.white, bgcolor=color.navy, text_halign=text.align_center)
+    table.cell(info_table, 2, 0, "RSI", text_color=color.white, bgcolor=color.navy, text_halign=text.align_center)
+    table.cell(info_table, 3, 0, "Clash", text_color=color.white, bgcolor=color.navy, text_halign=text.align_center)
+    table.cell(info_table, 4, 0, "Buy", text_color=color.white, bgcolor=color.navy, text_halign=text.align_center)
+    table.cell(info_table, 5, 0, "Sell", text_color=color.white, bgcolor=color.navy, text_halign=text.align_center)
     
-    table.cell(hybrid_table, 0, 1, "Enterprise Value:", text_color=color.white, bgcolor=color.new(color.black, 50))
-    table.cell(hybrid_table, 1, 1, str.tostring(enterprise_value, format.price), text_color=color.yellow)
+    // TF1 Row
+    if show_tf1
+        table.cell(info_table, 0, 1, tf1, text_color=color.white, bgcolor=color.new(color.black, 50))
+        table.cell(info_table, 1, 1, str.tostring(close, format.price), text_color=color.white, bgcolor=color.new(color.black, 50))
+        table.cell(info_table, 2, 1, str.tostring(rsi_tf1, format.price), text_color=rsi_tf1 < rsi_oversold ? color.green : rsi_tf1 > rsi_overbought ? color.red : color.yellow, bgcolor=color.new(color.black, 50))
+        table.cell(info_table, 3, 1, str.tostring(clash_tf1, format.price), text_color=color.white, bgcolor=color.new(color.black, 50))
+        table.cell(info_table, 4, 1, buy_tf1 ? "✓" : "", text_color=color.lime, bgcolor=color.new(color.black, 50), text_halign=text.align_center)
+        table.cell(info_table, 5, 1, sell_tf1 ? "✓" : "", text_color=color.red, bgcolor=color.new(color.black, 50), text_halign=text.align_center)
     
-    table.cell(hybrid_table, 0, 2, "Terminal Value:", text_color=color.white, bgcolor=color.new(color.black, 50))
-    table.cell(hybrid_table, 1, 2, str.tostring(terminal_value, format.price), text_color=color.yellow)
+    // TF2 Row
+    if show_tf2
+        table.cell(info_table, 0, 2, tf2, text_color=color.white, bgcolor=color.new(color.black, 50))
+        table.cell(info_table, 1, 2, str.tostring(close, format.price), text_color=color.white, bgcolor=color.new(color.black, 50))
+        table.cell(info_table, 2, 2, str.tostring(rsi_tf2, format.price), text_color=rsi_tf2 < rsi_oversold ? color.green : rsi_tf2 > rsi_overbought ? color.red : color.yellow, bgcolor=color.new(color.black, 50))
+        table.cell(info_table, 3, 2, str.tostring(clash_tf2, format.price), text_color=color.white, bgcolor=color.new(color.black, 50))
+        table.cell(info_table, 4, 2, buy_tf2 ? "✓" : "", text_color=color.lime, bgcolor=color.new(color.black, 50), text_halign=text.align_center)
+        table.cell(info_table, 5, 2, sell_tf2 ? "✓" : "", text_color=color.red, bgcolor=color.new(color.black, 50), text_halign=text.align_center)
     
-    table.cell(hybrid_table, 0, 3, "IVPS:", text_color=color.white, bgcolor=color.new(color.black, 50))
-    table.cell(hybrid_table, 1, 3, str.tostring(ivps, format.price), text_color=color.purple, text_size=size.large)
+    // TF3 Row
+    if show_tf3
+        table.cell(info_table, 0, 3, tf3, text_color=color.white, bgcolor=color.new(color.black, 50))
+        table.cell(info_table, 1, 3, str.tostring(close, format.price), text_color=color.white, bgcolor=color.new(color.black, 50))
+        table.cell(info_table, 2, 3, str.tostring(rsi_tf3, format.price), text_color=rsi_tf3 < rsi_oversold ? color.green : rsi_tf3 > rsi_overbought ? color.red : color.yellow, bgcolor=color.new(color.black, 50))
+        table.cell(info_table, 3, 3, str.tostring(clash_tf3, format.price), text_color=color.white, bgcolor=color.new(color.black, 50))
+        table.cell(info_table, 4, 3, buy_tf3 ? "✓" : "", text_color=color.lime, bgcolor=color.new(color.black, 50), text_halign=text.align_center)
+        table.cell(info_table, 5, 3, sell_tf3 ? "✓" : "", text_color=color.red, bgcolor=color.new(color.black, 50), text_halign=text.align_center)
     
-    table.cell(hybrid_table, 0, 4, "Auth Threshold (80%):", text_color=color.white, bgcolor=color.new(color.black, 50))
-    table.cell(hybrid_table, 1, 4, str.tostring(auth_threshold, format.price), text_color=color.orange)
+    // TF4 Row
+    if show_tf4
+        table.cell(info_table, 0, 4, tf4, text_color=color.white, bgcolor=color.new(color.black, 50))
+        table.cell(info_table, 1, 4, str.tostring(close, format.price), text_color=color.white, bgcolor=color.new(color.black, 50))
+        table.cell(info_table, 2, 4, str.tostring(rsi_tf4, format.price), text_color=rsi_tf4 < rsi_oversold ? color.green : rsi_tf4 > rsi_overbought ? color.red : color.yellow, bgcolor=color.new(color.black, 50))
+        table.cell(info_table, 3, 4, str.tostring(clash_tf4, format.price), text_color=color.white, bgcolor=color.new(color.black, 50))
+        table.cell(info_table, 4, 4, buy_tf4 ? "✓" : "", text_color=color.lime, bgcolor=color.new(color.black, 50), text_halign=text.align_center)
+        table.cell(info_table, 5, 4, sell_tf4 ? "✓" : "", text_color=color.red, bgcolor=color.new(color.black, 50), text_halign=text.align_center)
     
-    table.cell(hybrid_table, 0, 5, "Current Price:", text_color=color.white, bgcolor=color.new(color.black, 50))
-    table.cell(hybrid_table, 1, 5, str.tostring(close, format.price), text_color=color.white)
+    // Confluence Row
+    table.cell(info_table, 0, 6, "CONFLUENCE", text_color=color.white, bgcolor=color.navy, text_halign=text.align_center)
+    table.cell(info_table, 1, 6, "", text_color=color.white, bgcolor=color.navy)
+    table.cell(info_table, 2, 6, "", text_color=color.white, bgcolor=color.navy)
+    table.cell(info_table, 3, 6, "", text_color=color.white, bgcolor=color.navy)
+    table.cell(info_table, 4, 6, str.tostring(total_buy_signals), text_color=total_buy_signals >= 2 ? color.lime : color.gray, bgcolor=color.new(color.black, 50), text_halign=text.align_center, text_size=size.large)
+    table.cell(info_table, 5, 6, str.tostring(total_sell_signals), text_color=total_sell_signals >= 2 ? color.red : color.gray, bgcolor=color.new(color.black, 50), text_halign=text.align_center, text_size=size.large)
     
-    table.cell(hybrid_table, 0, 6, "AuthFund Status:", text_color=color.white, bgcolor=color.new(color.black, 50))
-    auth_status = auth_fund_value == 1 ? "🟢 ACTIVE" : "🔴 INACTIVE"
-    table.cell(hybrid_table, 1, 6, auth_status, text_color=auth_fund_value == 1 ? color.lime : color.red, text_size=size.large)
+    // Buy TP/SL Info Row
+    table.cell(info_table, 0, 8, "BUY TP/SL", text_color=color.white, bgcolor=color.navy, text_halign=text.align_center)
+    table.cell(info_table, 1, 8, str.tostring(buy_entry, format.price), text_color=color.lime, bgcolor=color.new(color.black, 50), text_size=size.small)
+    table.cell(info_table, 2, 8, str.tostring(buy_tp, format.price), text_color=color.aqua, bgcolor=color.new(color.black, 50), text_size=size.small)
+    table.cell(info_table, 3, 8, str.tostring(buy_sl, format.price), text_color=color.orange, bgcolor=color.new(color.black, 50), text_size=size.small)
+    table.cell(info_table, 4, 8, "R:R", text_color=color.white, bgcolor=color.navy)
+    r_r_buy = (buy_tp - buy_entry) / (buy_entry - buy_sl)
+    table.cell(info_table, 5, 8, str.tostring(r_r_buy, format.price), text_color=color.white, bgcolor=color.new(color.black, 50), text_size=size.small)
     
-    // Order Flow Section
-    table.cell(hybrid_table, 0, 7, "ORDER FLOW EXECUTION", text_color=color.white, bgcolor=color.navy, text_halign=text.align_center)
-    table.cell(hybrid_table, 1, 7, "", text_color=color.white, bgcolor=color.navy)
+    // Sell TP/SL Info Row
+    table.cell(info_table, 0, 9, "SELL TP/SL", text_color=color.white, bgcolor=color.navy, text_halign=text.align_center)
+    table.cell(info_table, 1, 9, str.tostring(sell_entry, format.price), text_color=color.red, bgcolor=color.new(color.black, 50), text_size=size.small)
+    table.cell(info_table, 2, 9, str.tostring(sell_tp, format.price), text_color=color.maroon, bgcolor=color.new(color.black, 50), text_size=size.small)
+    table.cell(info_table, 3, 9, str.tostring(sell_sl, format.price), text_color=color.orange, bgcolor=color.new(color.black, 50), text_size=size.small)
+    table.cell(info_table, 4, 9, "R:R", text_color=color.white, bgcolor=color.navy)
+    r_r_sell = (sell_entry - sell_tp) / (sell_sl - sell_entry)
+    table.cell(info_table, 5, 9, str.tostring(r_r_sell, format.price), text_color=color.white, bgcolor=color.new(color.black, 50), text_size=size.small)
     
-    table.cell(hybrid_table, 0, 8, "Bid Volume:", text_color=color.white, bgcolor=color.new(color.black, 50))
-    table.cell(hybrid_table, 1, 8, str.tostring(bid_vol, format.volume), text_color=color.blue)
-    
-    table.cell(hybrid_table, 0, 9, "Ask Volume:", text_color=color.white, bgcolor=color.new(color.black, 50))
-    table.cell(hybrid_table, 1, 9, str.tostring(ask_vol, format.volume), text_color=color.orange)
-    
-    table.cell(hybrid_table, 0, 10, "CI Bullish:", text_color=color.white, bgcolor=color.new(color.black, 50))
-    table.cell(hybrid_table, 1, 10, str.tostring(ci_bullish_filtered, format.price), text_color=color.green)
-    
-    table.cell(hybrid_table, 0, 11, "Stacked Clash Buy:", text_color=color.white, bgcolor=color.new(color.black, 50))
-    table.cell(hybrid_table, 1, 11, str.tostring(stacked_clash_buy), text_color=stacked_clash_buy > 0 ? color.lime : color.gray, text_size=size.large)
-    
-    table.cell(hybrid_table, 0, 12, "Delta Strength:", text_color=color.white, bgcolor=color.new(color.black, 50))
-    table.cell(hybrid_table, 1, 12, str.tostring(delta_strength, format.price), text_color=color.yellow)
-    
-    table.cell(hybrid_table, 0, 13, "Threshold:", text_color=color.white, bgcolor=color.new(color.black, 50))
-    table.cell(hybrid_table, 1, 13, str.tostring(min_delta_strength, format.price), text_color=color.gray)
-    
-    // Final Signal
-    table.cell(hybrid_table, 0, 14, "HYBRID SIGNAL", text_color=color.white, bgcolor=color.navy, text_halign=text.align_center)
-    table.cell(hybrid_table, 1, 14, "", text_color=color.white, bgcolor=color.navy)
-    
-    signal_text = signal_buy ? "🟢 BUY" : signal_sell ? "🔴 SELL" : "⚪ NEUTRAL"
-    signal_col = signal_buy ? color.lime : signal_sell ? color.red : color.gray
-    table.cell(hybrid_table, 0, 15, "Signal:", text_color=color.white, bgcolor=color.new(color.black, 50))
-    table.cell(hybrid_table, 1, 15, signal_text, text_color=signal_col, text_size=size.large, text_halign=text.align_center)
+    // DCF Info Row
+    table.cell(info_table, 0, 10, "DCF IVPS", text_color=color.white, bgcolor=color.navy, text_halign=text.align_center)
+    table.cell(info_table, 1, 10, str.tostring(ivps, format.price), text_color=color.purple, bgcolor=color.new(color.black, 50))
+    table.cell(info_table, 2, 10, "Auth:", text_color=color.white, bgcolor=color.navy)
+    table.cell(info_table, 3, 10, str.tostring(auth_threshold, format.price), text_color=color.orange, bgcolor=color.new(color.black, 50))
+    table.cell(info_table, 4, 10, "Status:", text_color=color.white, bgcolor=color.navy)
+    auth_status = auth_fund_value == 1 ? "🟢 ON" : "🔴 OFF"
+    table.cell(info_table, 5, 10, auth_status, text_color=auth_fund_value == 1 ? color.lime : color.red, bgcolor=color.new(color.black, 50), text_size=size.large)
