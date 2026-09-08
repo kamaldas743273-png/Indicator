@@ -1,0 +1,243 @@
+//@version=5
+indicator("Footprint Analysis - Clash Detection", shorttitle="Footprint-Clash", overlay=true, precision=4)
+
+// ============================================================================
+// FOOTPRINT ANALYSIS & CLASH DETECTION
+// Detects Stacked Clash patterns and Iceberg orders
+// Corrected for division by zero and dust paradox
+// ============================================================================
+
+// ============================================================================
+// INPUT PARAMETERS
+// ============================================================================
+
+lookback_clash = input.int(20, title="Clash Lookback Period", minval=5)
+clash_imbalance_threshold = input.float(3.0, title="Clash Imbalance Threshold (θ_imb)", minval=1.5, maxval=5.0)
+stacked_clash_count = input.int(3, title="Stacked Clash Count (k ticks)", minval=2, maxval=5)
+min_volume_dust = input.float(100.0, title="Minimum Volume (Anti-Dust Paradox)", minval=10.0)
+
+// Iceberg Detection
+iceberg_ratio = input.float(1.5, title="Iceberg Volume Ratio", minval=1.0, maxval=3.0)
+volume_ma_length = input.int(20, title="Volume MA Length")
+
+// Display Options
+show_clash_buy = input.bool(true, title="Show Clash Buy Signals")
+show_clash_sell = input.bool(true, title="Show Clash Sell Signals")
+show_imbalance = input.bool(true, title="Show Imbalance Levels")
+show_iceberg = input.bool(true, title="Show Iceberg Detection")
+
+// ============================================================================
+// EPSILON CONSTANT (Prevent Division by Zero)
+// ============================================================================
+
+epsilon = 1e-6
+
+// ============================================================================
+// 1. CALCULATE FOOTPRINT METRICS
+// Footprint = Matrix of [Bid Volume, Ask Volume] at each price level
+// ============================================================================
+
+// Approximate bid/ask volumes from price action
+// This is a simplified model; in production, use real L2 data
+range_tick = high - low
+if range_tick == 0
+    range_tick := close * 0.0001
+
+// Distribute volume across price range
+bid_ask_ratio = (close - low) / range_tick
+bid_volume = volume * bid_ask_ratio
+ask_volume = volume * (1 - bid_ask_ratio)
+
+// Volume at different price levels (simplified using close proximity)
+vol_high_price = volume * (1 - bid_ask_ratio)  // Ask-side
+vol_low_price = volume * bid_ask_ratio         // Bid-side
+
+// ============================================================================
+// 2. DIAGONAL CLASH IMBALANCE (CI)
+// CI_P = (Ask Volume at P) / (Bid Volume at P-1 + epsilon)
+// Detects bullish clash: Ask absorption at higher price
+// ============================================================================
+
+// Current and previous bar metrics
+bid_vol_current = bid_volume
+ask_vol_current = ask_volume
+
+bid_vol_prev1 = bid_volume[1]
+ask_vol_prev1 = ask_volume[1]
+
+bid_vol_prev2 = bid_volume[2]
+ask_vol_prev2 = ask_volume[2]
+
+// Clash Imbalance (Bullish - Asks being absorbed)
+ci_bullish = ask_vol_current / (bid_vol_prev1 + epsilon)
+
+// Clash Imbalance (Bearish - Bids being absorbed)
+ci_bearish = bid_vol_current / (ask_vol_prev1 + epsilon)
+
+// ============================================================================
+// 3. ANTI-DUST PARADOX: Enforce Minimum Volume Threshold
+// Ignore clashes with negligible retail volume
+// ============================================================================
+
+dust_filter = ask_vol_current >= min_volume_dust
+
+ci_bullish_filtered = dust_filter ? ci_bullish : 0.0
+ci_bearish_filtered = dust_filter ? ci_bearish : 0.0
+
+// ============================================================================
+// 4. STACKED CLASH DETECTION
+// Check if k consecutive price ticks show clash imbalance > threshold
+// Uses Indicator Function: I(condition) = 1 if true, 0 if false
+// ============================================================================
+
+// Indicator function for bullish clash at current bar
+clash_bullish_current = ci_bullish_filtered > clash_imbalance_threshold ? 1 : 0
+
+// Indicator function for previous bars
+clash_bullish_prev1 = ci_bullish_filtered[1] > clash_imbalance_threshold ? 1 : 0
+clash_bullish_prev2 = ci_bullish_filtered[2] > clash_imbalance_threshold ? 1 : 0
+
+// Sum of k consecutive bullish clashes
+stacked_clash_bullish = clash_bullish_current + clash_bullish_prev1 + clash_bullish_prev2
+
+// Indicator function for bearish clash
+clash_bearish_current = ci_bearish_filtered > clash_imbalance_threshold ? 1 : 0
+clash_bearish_prev1 = ci_bearish_filtered[1] > clash_imbalance_threshold ? 1 : 0
+clash_bearish_prev2 = ci_bearish_filtered[2] > clash_imbalance_threshold ? 1 : 0
+
+stacked_clash_bearish = clash_bearish_current + clash_bearish_prev1 + clash_bearish_prev2
+
+// ============================================================================
+// 5. STACKED CLASH SIGNAL
+// = 1 if sum of k consecutive imbalanced nodes equals k
+// ============================================================================
+
+stacked_clash_buy = stacked_clash_bullish == stacked_clash_count ? 1 : 0
+stacked_clash_sell = stacked_clash_bearish == stacked_clash_count ? 1 : 0
+
+// ============================================================================
+// 6. ICEBERG DETECTION
+// Large hidden orders: Executed volume >> displayed volume
+// Characterized by sustained volume spikes with low price movement
+// ============================================================================
+
+avg_volume = ta.sma(volume, volume_ma_length)
+volume_spike = volume > avg_volume * iceberg_ratio
+
+// Iceberg signature: High volume, small price change
+price_change = math.abs(close - open) / close
+low_price_move = price_change < 0.005  // Less than 0.5% movement
+
+iceberg_signal = volume_spike and low_price_move
+
+// ============================================================================
+// 7. CUMULATIVE DELTA & ORDER FLOW STRENGTH
+// ============================================================================
+
+delta_current = ask_volume - bid_volume
+cumulative_delta = ta.cum(delta_current)
+
+// Order flow strength: How much delta relative to total volume
+of_strength = math.abs(cumulative_delta) / (ta.cum(volume) + epsilon)
+
+// ============================================================================
+// 8. DIRECTIONAL BIAS
+// Bullish: Stacked Clash Buy + Iceberg at support
+// Bearish: Stacked Clash Sell + Iceberg at resistance
+// ============================================================================
+
+bullish_bias = stacked_clash_buy == 1 and iceberg_signal
+bearish_bias = stacked_clash_sell == 1 and iceberg_signal
+
+// ============================================================================
+// PLOTTING - CLASH IMBALANCE LEVELS
+// ============================================================================
+
+plot(show_imbalance ? ci_bullish_filtered : na, title="Clash Imbalance Bullish", 
+     color=color.new(color.green, 50), linewidth=2)
+
+plot(show_imbalance ? ci_bearish_filtered : na, title="Clash Imbalance Bearish", 
+     color=color.new(color.red, 50), linewidth=2)
+
+hline(clash_imbalance_threshold, "Imbalance Threshold", color=color.orange, linestyle=hline.style_dashed)
+
+// ============================================================================
+// PLOTTING - STACKED CLASH SIGNALS
+// ============================================================================
+
+plotshape(show_clash_buy and stacked_clash_buy, title="Stacked Clash Buy", 
+          style=shape.diamond, location=location.belowbar, 
+          color=color.new(color.green, 0), size=size.small)
+
+plotshape(show_clash_sell and stacked_clash_sell, title="Stacked Clash Sell", 
+          style=shape.diamond, location=location.abovebar, 
+          color=color.new(color.red, 0), size=size.small)
+
+// ============================================================================
+// PLOTTING - ICEBERG DETECTION
+// ============================================================================
+
+bgcolor(show_iceberg and iceberg_signal ? color.new(color.blue, 85) : na, title="Iceberg Detection")
+
+plotshape(show_iceberg and iceberg_signal, title="Iceberg Alert", 
+          style=shape.square, location=location.top, 
+          color=color.new(color.blue, 0), size=size.tiny)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+alertcondition(stacked_clash_buy, title="Stacked Clash Buy Signal", 
+               message="Stacked Clash Buy Detected - Potential Institutional Sweep")
+
+alertcondition(stacked_clash_sell, title="Stacked Clash Sell Signal", 
+               message="Stacked Clash Sell Detected - Potential Institutional Sweep")
+
+alertcondition(iceberg_signal, title="Iceberg Order Detected", 
+               message="Iceberg Order Pattern Detected - Hidden Liquidity Present")
+
+alertcondition(bullish_bias, title="Bullish Confluence (Clash + Iceberg)", 
+               message="Bullish Signal: Stacked Clash + Iceberg at Support")
+
+alertcondition(bearish_bias, title="Bearish Confluence (Clash + Iceberg)", 
+               message="Bearish Signal: Stacked Clash + Iceberg at Resistance")
+
+// ============================================================================
+// INFO TABLE - REAL-TIME FOOTPRINT METRICS
+// ============================================================================
+
+var table footprint_table = table.new(position.top_left, 2, 11, border_color=color.gray, border_width=1)
+
+if barstate.islast
+    table.cell(footprint_table, 0, 0, "Footprint Analysis", text_color=color.white, bgcolor=color.navy)
+    table.cell(footprint_table, 1, 0, "", text_color=color.white, bgcolor=color.navy)
+    
+    table.cell(footprint_table, 0, 1, "Bid Volume:", text_color=color.white, bgcolor=color.new(color.black, 50))
+    table.cell(footprint_table, 1, 1, str.tostring(bid_volume, format.volume), text_color=color.blue)
+    
+    table.cell(footprint_table, 0, 2, "Ask Volume:", text_color=color.white, bgcolor=color.new(color.black, 50))
+    table.cell(footprint_table, 1, 2, str.tostring(ask_volume, format.volume), text_color=color.orange)
+    
+    table.cell(footprint_table, 0, 3, "Delta:", text_color=color.white, bgcolor=color.new(color.black, 50))
+    table.cell(footprint_table, 1, 3, str.tostring(delta_current, format.volume), text_color=color.gray)
+    
+    table.cell(footprint_table, 0, 4, "CI Bullish:", text_color=color.white, bgcolor=color.new(color.black, 50))
+    table.cell(footprint_table, 1, 4, str.tostring(ci_bullish_filtered, format.price), text_color=color.green)
+    
+    table.cell(footprint_table, 0, 5, "CI Bearish:", text_color=color.white, bgcolor=color.new(color.black, 50))
+    table.cell(footprint_table, 1, 5, str.tostring(ci_bearish_filtered, format.price), text_color=color.red)
+    
+    table.cell(footprint_table, 0, 6, "Stacked Clash Buy:", text_color=color.white, bgcolor=color.new(color.black, 50))
+    table.cell(footprint_table, 1, 6, str.tostring(stacked_clash_buy), text_color=stacked_clash_buy ? color.green : color.gray)
+    
+    table.cell(footprint_table, 0, 7, "Stacked Clash Sell:", text_color=color.white, bgcolor=color.new(color.black, 50))
+    table.cell(footprint_table, 1, 7, str.tostring(stacked_clash_sell), text_color=stacked_clash_sell ? color.red : color.gray)
+    
+    table.cell(footprint_table, 0, 8, "Iceberg Detected:", text_color=color.white, bgcolor=color.new(color.black, 50))
+    table.cell(footprint_table, 1, 8, str.tostring(iceberg_signal), text_color=iceberg_signal ? color.blue : color.gray)
+    
+    table.cell(footprint_table, 0, 9, "OF Strength:", text_color=color.white, bgcolor=color.new(color.black, 50))
+    table.cell(footprint_table, 1, 9, str.tostring(of_strength, format.percent), text_color=color.yellow)
+    
+    table.cell(footprint_table, 0, 10, "Cum. Delta:", text_color=color.white, bgcolor=color.new(color.black, 50))
+    table.cell(footprint_table, 1, 10, str.tostring(cumulative_delta, format.volume), text_color=color.gray)
