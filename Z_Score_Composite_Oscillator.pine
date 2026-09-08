@@ -1,0 +1,99 @@
+//@version=5
+indicator("Z-Score Composite Oscillator", shorttitle="ZCO", overlay=false, precision=4)
+
+// ============================================================================
+// Z-SCORE COMPOSITE OSCILLATOR (Master Equation)
+// Combines FRVP Deviation, VWAP Deviation, and Order Flow Ratio
+// Converts all metrics to Z-scores (standard deviations from rolling mean)
+// ============================================================================
+
+// Input Parameters
+lookback = input.int(20, title="Lookback Period (n)", minval=5)
+w1 = input.float(0.33, title="Weight 1: FRVP Deviation", minval=0.0, maxval=1.0)
+w2 = input.float(0.33, title="Weight 2: VWAP Deviation", minval=0.0, maxval=1.0)
+w3 = input.float(0.34, title="Weight 3: Order Flow Ratio", minval=0.0, maxval=1.0)
+
+// Visualization
+showSignal = input.bool(true, title="Show Z-Score Signal")
+showComponents = input.bool(true, title="Show Component Signals")
+signalColor = input.color(color.blue, title="Signal Color")
+
+// ============================================================================
+// 1. FRVP DEVIATION (X1)
+// Distance of current price from Point of Control (highest volume price)
+// ============================================================================
+
+volume_by_price = ta.cum(volume)
+poc_price = ta.highest(high, lookback)  // Simplified POC as highest price in range
+x1_frvp = (close - poc_price) / poc_price
+
+mu_x1 = ta.sma(x1_frvp, lookback)
+sigma_x1 = ta.stdev(x1_frvp, lookback)
+epsilon_math = 1e-6
+
+z1_frvp = (x1_frvp - mu_x1) / (sigma_x1 + epsilon_math)
+
+// ============================================================================
+// 2. VWAP DEVIATION (X2)
+// Distance of current price from Volume Weighted Average Price
+// ============================================================================
+
+vwap_val = ta.vwap(close)
+x2_vwap = (close - vwap_val) / vwap_val
+
+mu_x2 = ta.sma(x2_vwap, lookback)
+sigma_x2 = ta.stdev(x2_vwap, lookback)
+
+z2_vwap = (x2_vwap - mu_x2) / (sigma_x2 + epsilon_math)
+
+// ============================================================================
+// 3. ORDER FLOW RATIO (X3)
+// Cumulative Delta (Buy Volume - Sell Volume) / Total Volume
+// ============================================================================
+
+// Approximate Order Flow using price action and volume
+buy_volume = volume * (close - open) / (high - low + epsilon_math)
+sell_volume = volume - buy_volume
+cumulative_delta = ta.cum(buy_volume - sell_volume)
+total_volume = ta.cum(volume)
+
+x3_orderflow = cumulative_delta / (total_volume + epsilon_math)
+
+mu_x3 = ta.sma(x3_orderflow, lookback)
+sigma_x3 = ta.stdev(x3_orderflow, lookback)
+
+z3_orderflow = (x3_orderflow - mu_x3) / (sigma_x3 + epsilon_math)
+
+// ============================================================================
+// MASTER EQUATION: Composite Z-Score Signal
+// S_t = W1*(Z1) + W2*(Z2) + W3*(Z3)
+// ============================================================================
+
+signal_zco = w1 * z1_frvp + w2 * z2_vwap + w3 * z3_orderflow
+
+// ============================================================================
+// PLOTTING
+// ============================================================================
+
+plot(showSignal ? signal_zco : na, title="Z-Score Composite Signal", color=signalColor, linewidth=2)
+
+plot(showComponents ? z1_frvp : na, title="Z1: FRVP Deviation", color=color.new(color.red, 50), linewidth=1)
+plot(showComponents ? z2_vwap : na, title="Z2: VWAP Deviation", color=color.new(color.green, 50), linewidth=1)
+plot(showComponents ? z3_orderflow : na, title="Z3: Order Flow Ratio", color=color.new(color.purple, 50), linewidth=1)
+
+hline(0, "Zero Line", color=color.gray, linestyle=hline.style_dashed)
+hline(1, "Upper Band", color=color.orange, linestyle=hline.style_dotted)
+hline(-1, "Lower Band", color=color.orange, linestyle=hline.style_dotted)
+
+// ============================================================================
+// SIGNAL ALERTS
+// ============================================================================
+
+buySignal = signal_zco > 1.0
+sellSignal = signal_zco < -1.0
+
+alertcondition(buySignal, title="Buy Signal (ZCO > 1.0)", message="Z-Score Composite Oscillator Buy Signal")
+alertcondition(sellSignal, title="Sell Signal (ZCO < -1.0)", message="Z-Score Composite Oscillator Sell Signal")
+
+// Fill for visual confirmation
+bgcolor(buySignal ? color.new(color.green, 85) : sellSignal ? color.new(color.red, 85) : na)
