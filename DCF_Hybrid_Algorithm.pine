@@ -183,7 +183,7 @@ barcolor(candle_color, title="Signal Candle Color")
 // ============================================================================
 
 plot(show_dcf_level ? ivps : na, title="IVPS (Intrinsic Value Per Share)", color=color.new(color.purple, 0), linewidth=2)
-plot(show_dcf_level ? auth_threshold : na, title="Authorization Threshold (80% IVPS)", color=color.new(color.orange, 0), linewidth=2, linestyle=plot.style_dashed)
+plot(show_dcf_level ? auth_threshold : na, title="Authorization Threshold (80% IVPS)", color=color.new(color.orange, 0), linewidth=2, linestyle=plot.linestyle_dashed)
 
 // ============================================================================
 // PLOT AUTHORIZATION GATE STATUS
